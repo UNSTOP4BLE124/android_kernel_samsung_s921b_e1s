@@ -588,6 +588,12 @@ KBUILD_CFLAGS   := -Wall -Wundef -Werror=strict-prototypes -Wno-trigraphs \
 		   -Werror=implicit-function-declaration -Werror=implicit-int \
 		   -Werror=return-type -Wno-format-security \
 		   -std=gnu11
+KBUILD_CFLAGS += -Wno-error=default-const-init-var-unsafe
+KBUILD_CFLAGS += -Wno-error=default-const-init-field-unsafe
+KBUILD_CFLAGS += -Wno-error=uninitialized-const-pointer
+KBUILD_CFLAGS += -Wno-error=uninitialized
+KBUILD_CFLAGS += -Wno-enum-compare
+
 KBUILD_CPPFLAGS := -D__KERNEL__
 KBUILD_RUSTFLAGS := $(rust_common_flags) \
 		    --target=$(objtree)/rust/target.json \
