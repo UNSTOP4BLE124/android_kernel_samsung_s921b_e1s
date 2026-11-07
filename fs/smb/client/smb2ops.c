@@ -4398,18 +4398,20 @@ static void *smb2_aead_req_alloc(struct crypto_aead *tfm, const struct smb_rqst 
 	len += crypto_aead_alignmask(tfm) & ~(crypto_tfm_ctx_alignment() - 1);
 	len = ALIGN(len, crypto_tfm_ctx_alignment());
 	len += req_size;
-	len = ALIGN(len, __alignof__(struct scatterlist));
-	len += *num_sgs * sizeof(**sgl);
 
 	p = kmalloc(len, GFP_ATOMIC);
 	if (!p)
 		return NULL;
 
+	*sgl = kvcalloc(*num_sgs, sizeof(struct scatterlist), GFP_NOFS);
+	if (!sgl) {
+		kfree_sensitive(p);
+		return NULL;
+	}
+
 	*iv = (u8 *)PTR_ALIGN(p, crypto_aead_alignmask(tfm) + 1);
 	*req = (struct aead_request *)PTR_ALIGN(*iv + iv_size,
 						crypto_tfm_ctx_alignment());
-	*sgl = (struct scatterlist *)PTR_ALIGN((u8 *)*req + req_size,
-					       __alignof__(struct scatterlist));
 	return p;
 }
 
@@ -4564,6 +4566,7 @@ crypt_message(struct TCP_Server_Info *server, int num_rqst,
 	if (!rc && enc)
 		memcpy(&tr_hdr->Signature, sign, SMB2_SIGNATURE_SIZE);
 
+	kvfree(sg);
 	kfree_sensitive(creq);
 	return rc;
 }

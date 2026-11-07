@@ -1473,7 +1473,7 @@ static void __sched remove_waiter(struct rt_mutex_base *lock,
 	lockdep_assert_held(&lock->wait_lock);
 
 	raw_spin_lock(&current->pi_lock);
-	rt_mutex_dequeue(lock, waiter);
+		rt_mutex_dequeue(lock, waiter);
 	current->pi_blocked_on = NULL;
 	raw_spin_unlock(&current->pi_lock);
 

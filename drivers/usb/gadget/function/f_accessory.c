@@ -138,6 +138,9 @@ struct acc_dev {
 
 	/* list of dead HID devices to unregister */
 	struct list_head	dead_hid_list;
+
+	/* usb accessory restriction flag */
+	bool usb_acc_restrict;
 };
 
 static struct usb_interface_descriptor acc_interface_desc = {
@@ -501,7 +504,7 @@ static void acc_complete_send_hid_event(struct usb_ep *ep,
 		return;
 	}
 
-	hid_report_raw_event(hid->hid, HID_INPUT_REPORT, req->buf, length, 1);
+	__hid_report_raw_event(hid->hid, HID_INPUT_REPORT, req->buf, length, length, 1);
 }
 
 static int acc_hid_parse(struct hid_device *hid)
@@ -536,7 +539,7 @@ static int acc_hid_raw_request(struct hid_device *hid, unsigned char reportnum,
 	return 0;
 }
 
-static struct hid_ll_driver acc_hid_ll_driver = {
+struct hid_ll_driver acc_hid_ll_driver = {
 	.parse = acc_hid_parse,
 	.start = acc_hid_start,
 	.stop = acc_hid_stop,
@@ -750,8 +753,14 @@ requeue_req:
 	}
 
 	/* wait for a request to complete */
+rx_done_wait_event:
 	ret = wait_event_interruptible(dev->read_wq, dev->rx_done);
 	if (ret < 0) {
+		pr_info("usb: %s: rx_done event break:%d\n",__func__, ret);
+		if (ret == -ERESTARTSYS) {
+			usleep_range(1000, 2000);
+			goto rx_done_wait_event;
+		}
 		r = ret;
 		ret = usb_ep_dequeue(dev->ep_out, req);
 		if (ret != 0) {
@@ -759,6 +768,7 @@ requeue_req:
 			// it will be retrieved in the next read.
 			pr_debug("acc_read: cancelling failed %d", ret);
 		}
+		pr_info("usb: %s: rx dequeue:%d\n",__func__, ret);
 		goto done;
 	}
 
@@ -993,6 +1003,10 @@ int acc_ctrlrequest(struct usb_composite_dev *cdev,
 	 */
 	if (!dev)
 		return -ENODEV;
+
+	/* Check if HID commands are restricted */
+	if (dev->usb_acc_restrict && (b_request == ACCESSORY_REGISTER_HID))
+		goto err;
 
 	if (b_requestType == (USB_DIR_OUT | USB_TYPE_VENDOR)) {
 		if (b_request == ACCESSORY_START) {
@@ -1476,8 +1490,57 @@ static struct configfs_item_operations acc_item_ops = {
 	.release        = acc_attr_release,
 };
 
+/* configfs attributes for usb_acc_restrict */
+static ssize_t usb_acc_restrict_show(struct config_item *item, char *page)
+{
+	struct acc_dev *dev = get_acc_dev();
+	int ret;
+
+	if (!dev)
+		return -ENODEV;
+
+	ret = sprintf(page, "%d\n", dev->usb_acc_restrict ? 1 : 0);
+	put_acc_dev(dev);
+	return ret;
+}
+
+static ssize_t usb_acc_restrict_store(struct config_item *item,
+				 const char *page, size_t len)
+{
+	struct acc_dev *dev = get_acc_dev();
+	bool val = false;
+
+	if (!dev)
+		return -ENODEV;
+
+	if (len == 1 && page[0] == '1')
+		val = true;
+	else if (len == 1 && page[0] == '0')
+		val = false;
+	else {
+		put_acc_dev(dev);
+		return -EINVAL;
+	}
+
+	dev->usb_acc_restrict = val;
+
+	pr_info("USB accessory HID restriction %s\n",
+		dev->usb_acc_restrict ? "enabled" : "disabled");
+
+	put_acc_dev(dev);
+	return len;
+}
+
+CONFIGFS_ATTR(usb_acc_, restrict);
+
+static struct configfs_attribute *acc_attrs[] = {
+	&usb_acc_attr_restrict,
+	NULL,
+};
+
 static struct config_item_type acc_func_type = {
 	.ct_item_ops    = &acc_item_ops,
+	.ct_attrs		= acc_attrs,
 	.ct_owner       = THIS_MODULE,
 };
 

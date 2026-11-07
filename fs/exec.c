@@ -63,6 +63,7 @@
 #include <linux/vmalloc.h>
 #include <linux/io_uring.h>
 #include <linux/syscall_user_dispatch.h>
+#include <linux/task_integrity.h>
 #include <linux/coredump.h>
 
 #ifndef __GENKSYMS__
@@ -78,6 +79,14 @@
 
 #include <trace/events/sched.h>
 #include <trace/hooks/sched.h>
+
+#ifdef CONFIG_SECURITY_DEFEX
+#include <linux/defex.h>
+#endif
+
+#ifdef CONFIG_KDP_CRED
+#include <linux/kdp.h>
+#endif
 
 static int bprm_creds_from_file(struct linux_binprm *bprm);
 
@@ -1037,6 +1046,10 @@ static int exec_mmap(struct mm_struct *mm)
 	lru_gen_add_mm(mm);
 	task_unlock(tsk);
 	lru_gen_use_mm(mm);
+#ifdef CONFIG_KDP_CRED
+	if (kdp_enable && is_kdp_protect_addr((u64)current_cred()))
+		uh_call(UH_APP_KDP, SET_CRED_PGD, (u64)current_cred(), (u64)mm->pgd, 0, 0);
+#endif
 	if (old_mm) {
 		mmap_read_unlock(old_mm);
 		BUG_ON(active_mm != old_mm);
@@ -1324,7 +1337,8 @@ int begin_new_exec(struct linux_binprm * bprm)
 	 * dma_buf_begin_new_exec) for the new mm_struct.
 	 */
 	if (IS_ENABLED(CONFIG_DMA_SHARED_BUFFER)) {
-		refcount_inc(&current->dmabuf_info->refcnt);
+		if (current->dmabuf_info)
+			get_dmabuf_info(current->dmabuf_info);
 		me->mm->abi_extend->dmabuf_info = current->dmabuf_info;
 	}
 
@@ -1805,6 +1819,8 @@ static int exec_binprm(struct linux_binprm *bprm)
 		if (depth > 5)
 			return -ELOOP;
 
+		five_bprm_check(bprm, depth);
+
 		ret = search_binary_handler(bprm);
 		if (ret < 0)
 			return ret;
@@ -1854,6 +1870,15 @@ static int bprm_execve(struct linux_binprm *bprm,
 	if (IS_ERR(file))
 		goto out_unmark;
 
+#ifdef CONFIG_SECURITY_DEFEX
+	retval = task_defex_enforce(current, file, -__NR_execve, bprm);
+	if (retval < 0) {
+		bprm->file = file;
+		retval = -EPERM;
+		goto out_unmark;
+	 }
+#endif
+
 	sched_exec();
 
 	bprm->file = file;
@@ -1875,8 +1900,10 @@ static int bprm_execve(struct linux_binprm *bprm,
 		goto out;
 
 	retval = exec_binprm(bprm);
-	if (retval < 0)
+	if (retval < 0) {
+		task_integrity_delayed_reset(current, CAUSE_EXEC, bprm->file);
 		goto out;
+	}
 
 	/* execve succeeded */
 	current->fs->in_exec = 0;

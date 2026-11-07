@@ -339,6 +339,11 @@ static bool unix_vertex_dead(struct unix_vertex *vertex)
 	return true;
 }
 
+enum unix_recv_queue_lock_class {
+	U_RECVQ_LOCK_NORMAL,
+	U_RECVQ_LOCK_EMBRYO,
+};
+
 static void unix_collect_skb(struct list_head *scc, struct sk_buff_head *hitlist)
 {
 	struct unix_vertex *vertex;
